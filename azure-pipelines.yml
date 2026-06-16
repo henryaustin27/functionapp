@@ -6,7 +6,7 @@ trigger:
 variables:
   NODE_VERSION: '22.x'
   FUNCTIONAPP_NAME: 'function-app-henry'
-  AZURE_SERVICE_CONNECTION: 'sc-functionapp-dev'
+  AZURE_SERVICE_CONNECTION: 'dev'
   PACKAGE_PATH: '$(Build.ArtifactStagingDirectory)/functionapp.zip'
 
 pool:
