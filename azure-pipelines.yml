@@ -3,71 +3,119 @@ trigger:
     include:
       - dev_master
 
+pr: none
+
 variables:
   NODE_VERSION: '22.x'
+
+  # Azure resource names
   FUNCTIONAPP_NAME: 'function-app-henry'
-  AZURE_SERVICE_CONNECTION: 'dev'
-  PACKAGE_PATH: '$(Build.ArtifactStagingDirectory)/functionapp.zip'
+  AZURE_SERVICE_CONNECTION: 'sc-functionapp-dev'
+
+  # Build/package locations
+  FUNCTION_PACKAGE_FOLDER: '$(Build.ArtifactStagingDirectory)/function-package'
+  FUNCTION_ZIP_PATH: '$(Build.ArtifactStagingDirectory)/functionapp.zip'
 
 pool:
   vmImage: 'ubuntu-latest'
 
 stages:
+
+# =====================================================
+# BUILD AND PACKAGE
+# =====================================================
 - stage: Build
   displayName: 'Build Function App'
+
   jobs:
-  - job: Build
+  - job: BuildNodeFunction
     displayName: 'Build Node.js Function'
+
     steps:
     - checkout: self
       displayName: 'Checkout source code'
+      clean: true
 
-    - task: NodeTool@0
+    - task: UseNode@1
       displayName: 'Install Node.js 22'
       inputs:
-        versionSpec: '$(NODE_VERSION)'
+        version: '$(NODE_VERSION)'
 
-    - script: npm ci
-      displayName: 'Install dependencies'
+    - script: |
+        node --version
+        npm --version
+      displayName: 'Display Node.js and npm versions'
+
+    - script: |
+        npm ci --omit=dev
+      displayName: 'Install production dependencies'
+
+    - task: CopyFiles@2
+      displayName: 'Prepare Function App package'
+      inputs:
+        SourceFolder: '$(System.DefaultWorkingDirectory)'
+        Contents: |
+          host.json
+          package.json
+          package-lock.json
+          src/**
+          node_modules/**
+        TargetFolder: '$(FUNCTION_PACKAGE_FOLDER)'
+        CleanTargetFolder: true
+        OverWrite: true
 
     - task: ArchiveFiles@2
-      displayName: 'Create deployment package'
+      displayName: 'Create Function App ZIP package'
       inputs:
-        rootFolderOrFile: '$(System.DefaultWorkingDirectory)'
+        rootFolderOrFile: '$(FUNCTION_PACKAGE_FOLDER)'
         includeRootFolder: false
         archiveType: 'zip'
-        archiveFile: '$(PACKAGE_PATH)'
+        archiveFile: '$(FUNCTION_ZIP_PATH)'
         replaceExistingArchive: true
 
-    - task: PublishBuildArtifacts@1
-      displayName: 'Publish Function artifact'
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Function App artifact'
       inputs:
-        PathtoPublish: '$(PACKAGE_PATH)'
-        ArtifactName: 'functionapp'
-        publishLocation: 'Container'
+        targetPath: '$(FUNCTION_ZIP_PATH)'
+        artifact: 'functionapp'
+        publishLocation: 'pipeline'
 
+
+# =====================================================
+# DEPLOY TO FLEX CONSUMPTION FUNCTION APP
+# =====================================================
 - stage: Deploy_Dev
   displayName: 'Deploy to Dev'
   dependsOn: Build
-  condition: succeeded()
+
+  condition: |
+    and(
+      succeeded(),
+      eq(variables['Build.SourceBranch'], 'refs/heads/dev_master')
+    )
+
   jobs:
-  - deployment: DeployFunction
-    displayName: 'Deploy Azure Function App'
+  - deployment: DeployFunctionApp
+    displayName: 'Deploy Node.js Function App'
     environment: 'dev'
+
     strategy:
       runOnce:
         deploy:
           steps:
-          - task: DownloadBuildArtifacts@0
-            displayName: 'Download Function artifact'
+          - checkout: none
+
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Download Function App artifact'
             inputs:
-              artifactName: 'functionapp'
-              downloadPath: '$(System.ArtifactsDirectory)'
+              artifact: 'functionapp'
+              path: '$(Pipeline.Workspace)/functionapp'
 
           - task: AzureFunctionApp@2
-            displayName: 'Deploy Node.js Function App'
+            displayName: 'Deploy to Azure Function App'
             inputs:
               azureSubscription: '$(AZURE_SERVICE_CONNECTION)'
               appType: 'functionAppLinux'
+              isFlexConsumption: true
               appName: '$(FUNCTIONAPP_NAME)'
-              package: '$(System.ArtifactsDirectory)/functionapp/functionapp.zip'
+              package: '$(Pipeline.Workspace)/functionapp/functionapp.zip'
