@@ -10,7 +10,7 @@ variables:
 
   # Azure resource names
   FUNCTIONAPP_NAME: 'function-app-henry'
-  AZURE_SERVICE_CONNECTION: 'sc-functionapp-dev'
+  AZURE_SERVICE_CONNECTION: 'dev'
 
   # Build/package locations
   FUNCTION_PACKAGE_FOLDER: '$(Build.ArtifactStagingDirectory)/function-package'
