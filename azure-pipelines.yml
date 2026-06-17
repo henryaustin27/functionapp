@@ -7,12 +7,8 @@ pr: none
 
 variables:
   NODE_VERSION: '22.x'
-
-  # Azure resource names
   FUNCTIONAPP_NAME: 'function-app-henry'
   AZURE_SERVICE_CONNECTION: 'dev'
-
-  # Build/package locations
   FUNCTION_PACKAGE_FOLDER: '$(Build.ArtifactStagingDirectory)/function-package'
   FUNCTION_ZIP_PATH: '$(Build.ArtifactStagingDirectory)/functionapp.zip'
 
@@ -22,10 +18,51 @@ pool:
 stages:
 
 # =====================================================
+# SECURITY SCAN
+# =====================================================
+- stage: SecurityScan
+  displayName: 'Security & Credential Scan'
+
+  jobs:
+  - job: CredScan
+    displayName: 'Run Credential & Dependency Scan'
+
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: UseNode@1
+      displayName: 'Install Node.js $(NODE_VERSION)'
+      inputs:
+        version: '$(NODE_VERSION)'
+
+    # Detect secrets/credentials leaked in source code
+    - task: CredScan@3
+      displayName: 'Credential Scanner'
+      inputs:
+        outputFormat: 'sarif'
+        scanFolder: '$(System.DefaultWorkingDirectory)'
+
+    # Audit npm dependencies for known vulnerabilities (CVEs)
+    - script: |
+        npm audit --audit-level=high
+      displayName: 'npm audit – fail on high/critical CVEs'
+      continueOnError: false
+
+    # SARIF results are published to the Security tab in ADO
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish CredScan results'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/.credScanResult'
+        ArtifactName: 'CredscanResults'
+
+# =====================================================
 # BUILD AND PACKAGE
 # =====================================================
 - stage: Build
   displayName: 'Build Function App'
+  dependsOn: SecurityScan
 
   jobs:
   - job: BuildNodeFunction
@@ -37,7 +74,7 @@ stages:
       clean: true
 
     - task: UseNode@1
-      displayName: 'Install Node.js 22'
+      displayName: 'Install Node.js $(NODE_VERSION)'
       inputs:
         version: '$(NODE_VERSION)'
 
@@ -46,12 +83,43 @@ stages:
         npm --version
       displayName: 'Display Node.js and npm versions'
 
+    # ── Code quality ──────────────────────────────────
+    # Install ALL deps (inc. devDeps) for linting & tests
+    - script: npm ci
+      displayName: 'Install all dependencies (lint + test)'
+
     - script: |
-        npm ci --omit=dev
-      displayName: 'Install production dependencies'
+        npm run lint --if-present
+      displayName: 'Lint source code'
+      continueOnError: false
+
+    - script: |
+        npm test --if-present
+      displayName: 'Run unit tests'
+      continueOnError: false
+
+    # Publish test results so they appear in the Tests tab
+    - task: PublishTestResults@2
+      displayName: 'Publish test results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/test-results/*.xml'
+        failTaskOnFailedTests: true
+
+    # Publish code coverage to the Coverage tab
+    - task: PublishCodeCoverageResults@2
+      displayName: 'Publish code coverage'
+      condition: succeededOrFailed()
+      inputs:
+        summaryFileLocation: '**/coverage/cobertura-coverage.xml'
+
+    # ── Prune to production deps before packaging ─────
+    - script: npm ci --omit=dev
+      displayName: 'Prune to production dependencies'
 
     - task: CopyFiles@2
-      displayName: 'Prepare Function App package'
+      displayName: 'Stage Function App files'
       inputs:
         SourceFolder: '$(System.DefaultWorkingDirectory)'
         Contents: |
@@ -65,7 +133,7 @@ stages:
         OverWrite: true
 
     - task: ArchiveFiles@2
-      displayName: 'Create Function App ZIP package'
+      displayName: 'Create Function App ZIP'
       inputs:
         rootFolderOrFile: '$(FUNCTION_PACKAGE_FOLDER)'
         includeRootFolder: false
@@ -82,7 +150,7 @@ stages:
 
 
 # =====================================================
-# DEPLOY TO FLEX CONSUMPTION FUNCTION APP
+# DEPLOY TO DEV
 # =====================================================
 - stage: Deploy_Dev
   displayName: 'Deploy to Dev'
@@ -97,6 +165,9 @@ stages:
   jobs:
   - deployment: DeployFunctionApp
     displayName: 'Deploy Node.js Function App'
+    # 'environment' enables approval gates, deployment history,
+    # and audit trails in Azure DevOps Environments.
+    # Configure required approvers under Pipelines → Environments → dev.
     environment: 'dev'
 
     strategy:
@@ -112,10 +183,22 @@ stages:
               path: '$(Pipeline.Workspace)/functionapp'
 
           - task: AzureFunctionApp@2
-            displayName: 'Deploy to Azure Function App'
+            displayName: 'Deploy to Azure Function App (Flex Consumption)'
             inputs:
               azureSubscription: '$(AZURE_SERVICE_CONNECTION)'
               appType: 'functionAppLinux'
               isFlexConsumption: true
               appName: '$(FUNCTIONAPP_NAME)'
               package: '$(Pipeline.Workspace)/functionapp/functionapp.zip'
+
+          # Smoke-test: verify the deployment responded successfully
+          - script: |
+              echo "Smoke testing deployed function app..."
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                "https://$(FUNCTIONAPP_NAME).azurewebsites.net/api/health")
+              echo "Health check HTTP status: $STATUS"
+              if [ "$STATUS" != "200" ]; then
+                echo "##vso[task.logissue type=error]Health check failed – HTTP $STATUS"
+                exit 1
+              fi
+            displayName: 'Post-deploy health check'
