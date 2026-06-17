@@ -25,7 +25,7 @@ stages:
 
   jobs:
   - job: CredScan
-    displayName: 'Run Credential & Dependency Scan'
+    displayName: 'Run Dependency & Secret Scan'
 
     steps:
     - checkout: self
@@ -36,26 +36,19 @@ stages:
       inputs:
         version: '$(NODE_VERSION)'
 
-    # Detect secrets/credentials leaked in source code
-    - task: CredScan@3
-      displayName: 'Credential Scanner'
-      inputs:
-        outputFormat: 'sarif'
-        scanFolder: '$(System.DefaultWorkingDirectory)'
+    # Scan source code for leaked secrets/credentials (no Marketplace required)
+    - script: |
+        npm install -g @secretlint/secretlint @secretlint/secretlint-rule-preset-recommend
+        secretlint "**/*" --secretlintrc '{"rules":[{"id":"@secretlint/secretlint-rule-preset-recommend"}]}'
+      displayName: 'Secretlint – scan for leaked credentials'
+      continueOnError: false
 
-    # Audit npm dependencies for known vulnerabilities (CVEs)
+    # Block pipeline on any high or critical CVE in dependencies
     - script: |
         npm audit --audit-level=high
       displayName: 'npm audit – fail on high/critical CVEs'
       continueOnError: false
 
-    # SARIF results are published to the Security tab in ADO
-    - task: PublishBuildArtifacts@1
-      displayName: 'Publish CredScan results'
-      condition: always()
-      inputs:
-        PathtoPublish: '$(System.DefaultWorkingDirectory)/.credScanResult'
-        ArtifactName: 'CredscanResults'
 
 # =====================================================
 # BUILD AND PACKAGE
@@ -83,8 +76,7 @@ stages:
         npm --version
       displayName: 'Display Node.js and npm versions'
 
-    # ── Code quality ──────────────────────────────────
-    # Install ALL deps (inc. devDeps) for linting & tests
+    # Install ALL deps (including devDeps) for linting and tests
     - script: npm ci
       displayName: 'Install all dependencies (lint + test)'
 
@@ -98,7 +90,7 @@ stages:
       displayName: 'Run unit tests'
       continueOnError: false
 
-    # Publish test results so they appear in the Tests tab
+    # Publish test results to the Tests tab in ADO
     - task: PublishTestResults@2
       displayName: 'Publish test results'
       condition: succeededOrFailed()
@@ -107,14 +99,14 @@ stages:
         testResultsFiles: '**/test-results/*.xml'
         failTaskOnFailedTests: true
 
-    # Publish code coverage to the Coverage tab
+    # Publish code coverage to the Coverage tab in ADO
     - task: PublishCodeCoverageResults@2
       displayName: 'Publish code coverage'
       condition: succeededOrFailed()
       inputs:
         summaryFileLocation: '**/coverage/cobertura-coverage.xml'
 
-    # ── Prune to production deps before packaging ─────
+    # Prune to production-only deps before packaging
     - script: npm ci --omit=dev
       displayName: 'Prune to production dependencies'
 
@@ -165,9 +157,8 @@ stages:
   jobs:
   - deployment: DeployFunctionApp
     displayName: 'Deploy Node.js Function App'
-    # 'environment' enables approval gates, deployment history,
-    # and audit trails in Azure DevOps Environments.
-    # Configure required approvers under Pipelines → Environments → dev.
+    # Configure approvers under Pipelines → Environments → dev
+    # for a full audit trail of who approved each deployment
     environment: 'dev'
 
     strategy:
@@ -191,9 +182,9 @@ stages:
               appName: '$(FUNCTIONAPP_NAME)'
               package: '$(Pipeline.Workspace)/functionapp/functionapp.zip'
 
-          # Smoke-test: verify the deployment responded successfully
+          # Smoke-test: verify the app responds after deployment
           - script: |
-              echo "Smoke testing deployed function app..."
+              echo "Running post-deploy health check..."
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
                 "https://$(FUNCTIONAPP_NAME).azurewebsites.net/api/health")
               echo "Health check HTTP status: $STATUS"
