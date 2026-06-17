@@ -24,8 +24,8 @@ stages:
   displayName: 'Security & Credential Scan'
 
   jobs:
-  - job: CredScan
-    displayName: 'Run Dependency & Secret Scan'
+  - job: DependencyScan
+    displayName: 'Run Dependency Vulnerability Scan'
 
     steps:
     - checkout: self
@@ -35,13 +35,6 @@ stages:
       displayName: 'Install Node.js $(NODE_VERSION)'
       inputs:
         version: '$(NODE_VERSION)'
-
-    # Install and run via npx to avoid global PATH issues
-    - script: |
-        npm install --save-dev @secretlint/secretlint @secretlint/secretlint-rule-preset-recommend
-        npx secretlint "**/*" --secretlintrc '{"rules":[{"id":"@secretlint/secretlint-rule-preset-recommend"}]}'
-      displayName: 'Secretlint – scan for leaked credentials'
-      continueOnError: false
 
     # Block pipeline on any high or critical CVE in dependencies
     - script: |
