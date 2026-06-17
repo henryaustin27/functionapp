@@ -6,7 +6,7 @@ app.http('HttpTest', {
     handler: async (request, context) => {
         context.log('HTTP test function processed a request.');
 
-        const name = request.query.get('name') || 'Henry';
+        const name = request.query.get('name') || 'Austin';
 
         return {
             status: 200,
