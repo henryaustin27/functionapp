@@ -2,85 +2,89 @@ trigger:
   branches:
     include:
       - dev_master
-
+ 
 pr: none
-
+ 
 variables:
   NODE_VERSION: '22.x'
   FUNCTIONAPP_NAME: 'function-app-henry'
   AZURE_SERVICE_CONNECTION: 'dev'
   FUNCTION_PACKAGE_FOLDER: '$(Build.ArtifactStagingDirectory)/function-package'
   FUNCTION_ZIP_PATH: '$(Build.ArtifactStagingDirectory)/functionapp.zip'
-
+ 
 pool:
-  vmImage: 'ubuntu-latest'
-
+  name: 'default'  # Self-hosted agent inside functionapp_vnet
+ 
 stages:
-
+ 
 # =====================================================
 # SECURITY SCAN
 # =====================================================
 - stage: SecurityScan
   displayName: 'Security & Credential Scan'
-
+ 
   jobs:
   - job: DependencyScan
     displayName: 'Run Dependency Vulnerability Scan'
-
+    pool:
+      name: 'default'  # Self-hosted agent
+ 
     steps:
     - checkout: self
       clean: true
-
+ 
     - task: UseNode@1
       displayName: 'Install Node.js $(NODE_VERSION)'
       inputs:
         version: '$(NODE_VERSION)'
-
+ 
     - script: |
         npm audit --audit-level=high
       displayName: 'npm audit – fail on high/critical CVEs'
       continueOnError: false
-
-
+ 
+ 
 # =====================================================
 # BUILD AND PACKAGE
 # =====================================================
 - stage: Build
   displayName: 'Build Function App'
   dependsOn: SecurityScan
-
+ 
   jobs:
   - job: BuildNodeFunction
     displayName: 'Build Node.js Function'
-
+    pool:
+      name: 'default'  # Self-hosted agent
+ 
     steps:
     - checkout: self
       displayName: 'Checkout source code'
       clean: true
-
+ 
     - task: UseNode@1
       displayName: 'Install Node.js $(NODE_VERSION)'
       inputs:
         version: '$(NODE_VERSION)'
-
+ 
     - script: |
         node --version
         npm --version
       displayName: 'Display Node.js and npm versions'
-
+ 
     - script: npm ci
       displayName: 'Install all dependencies (lint + test)'
-
+ 
     - script: |
         npm run lint --if-present
       displayName: 'Lint source code'
       continueOnError: false
-
+ 
     - script: |
         npm test --if-present
       displayName: 'Run unit tests'
       continueOnError: false
-
+ 
     # Only publish test results if the file actually exists
     - script: |
         if compgen -G "**/test-results/*.xml" > /dev/null 2>&1; then
@@ -90,7 +94,7 @@ stages:
           echo "No test result files found – skipping publish"
         fi
       displayName: 'Check for test result files'
-
+ 
     - task: PublishTestResults@2
       displayName: 'Publish test results'
       condition: eq(variables['TEST_RESULTS_EXIST'], 'true')
@@ -98,7 +102,7 @@ stages:
         testResultsFormat: 'JUnit'
         testResultsFiles: '**/test-results/*.xml'
         failTaskOnFailedTests: true
-
+ 
     # Only publish coverage if the file actually exists
     - script: |
         if compgen -G "**/coverage/cobertura-coverage.xml" > /dev/null 2>&1; then
@@ -108,16 +112,16 @@ stages:
           echo "No coverage files found – skipping publish"
         fi
       displayName: 'Check for coverage files'
-
+ 
     - task: PublishCodeCoverageResults@2
       displayName: 'Publish code coverage'
       condition: eq(variables['COVERAGE_EXISTS'], 'true')
       inputs:
         summaryFileLocation: '**/coverage/cobertura-coverage.xml'
-
+ 
     - script: npm ci --omit=dev
       displayName: 'Prune to production dependencies'
-
+ 
     - task: CopyFiles@2
       displayName: 'Stage Function App files'
       inputs:
@@ -131,7 +135,7 @@ stages:
         TargetFolder: '$(FUNCTION_PACKAGE_FOLDER)'
         CleanTargetFolder: true
         OverWrite: true
-
+ 
     - task: ArchiveFiles@2
       displayName: 'Create Function App ZIP'
       inputs:
@@ -140,45 +144,47 @@ stages:
         archiveType: 'zip'
         archiveFile: '$(FUNCTION_ZIP_PATH)'
         replaceExistingArchive: true
-
+ 
     - task: PublishPipelineArtifact@1
       displayName: 'Publish Function App artifact'
       inputs:
         targetPath: '$(FUNCTION_ZIP_PATH)'
         artifact: 'functionapp'
         publishLocation: 'pipeline'
-
-
+ 
+ 
 # =====================================================
 # DEPLOY TO DEV
 # =====================================================
 - stage: Deploy_Dev
   displayName: 'Deploy to Dev'
   dependsOn: Build
-
+ 
   condition: |
     and(
       succeeded(),
       eq(variables['Build.SourceBranch'], 'refs/heads/dev_master')
     )
-
+ 
   jobs:
   - deployment: DeployFunctionApp
     displayName: 'Deploy Node.js Function App'
     environment: 'dev'
-
+    pool:
+      name: 'default'  # Self-hosted agent inside VNet — bypasses private endpoint block
+ 
     strategy:
       runOnce:
         deploy:
           steps:
           - checkout: none
-
+ 
           - task: DownloadPipelineArtifact@2
             displayName: 'Download Function App artifact'
             inputs:
               artifact: 'functionapp'
               path: '$(Pipeline.Workspace)/functionapp'
-
+ 
           - task: AzureFunctionApp@2
             displayName: 'Deploy to Azure Function App (Flex Consumption)'
             inputs:
@@ -187,7 +193,7 @@ stages:
               isFlexConsumption: true
               appName: '$(FUNCTIONAPP_NAME)'
               package: '$(Pipeline.Workspace)/functionapp/functionapp.zip'
-
+ 
           # Health check – warns but does NOT fail the pipeline
           # so a missing /api/health route won't block deployment
           - script: |
