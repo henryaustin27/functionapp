@@ -7,7 +7,7 @@ pr: none
  
 variables:
   NODE_VERSION: '22.x'
-  FUNCTIONAPP_NAME: 'function-app-henry'
+  FUNCTIONAPP_NAME: 'function-app-henry-prem'
   AZURE_SERVICE_CONNECTION: 'dev'
   FUNCTION_PACKAGE_FOLDER: '$(Build.ArtifactStagingDirectory)/function-package'
   FUNCTION_ZIP_PATH: '$(Build.ArtifactStagingDirectory)/functionapp.zip'
