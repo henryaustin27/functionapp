@@ -189,8 +189,7 @@ stages:
             displayName: 'Deploy to Azure Function App (Flex Consumption)'
             inputs:
               azureSubscription: '$(AZURE_SERVICE_CONNECTION)'
-              appType: 'functionAppLinux'
-              isFlexConsumption: true
+              appType: 'functionAppLinux'              
               appName: '$(FUNCTIONAPP_NAME)'
               package: '$(Pipeline.Workspace)/functionapp/functionapp.zip'
  
