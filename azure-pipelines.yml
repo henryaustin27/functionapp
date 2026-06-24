@@ -1,8 +1,7 @@
 trigger:
   branches:
     include:
-      - dev_master
- 
+      - dev_master 
 pr: none
 variables:
   NODE_VERSION: '22.x'
