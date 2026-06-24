@@ -11,7 +11,7 @@ variables:
   FUNCTION_ZIP_PATH: '$(Build.ArtifactStagingDirectory)/functionapp.zip'
  
 pool:
-  name: 'default'  # Self-hosted agent inside functionapp_vnet
+  name: 'default'  # Self-hosted agent inside functionapp_vne
  
 stages:
  
