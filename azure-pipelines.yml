@@ -4,7 +4,6 @@ trigger:
       - dev_master
  
 pr: none
- 
 variables:
   NODE_VERSION: '22.x'
   FUNCTIONAPP_NAME: 'function-app-henry-prem'
